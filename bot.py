@@ -188,21 +188,28 @@ def send_welcome(message):
 
 def download_instagram(url, user_id, message):
     """Download Instagram video/image"""
+    folder_path = None
     try:
         # Extract shortcode
         shortcode = url.split("/")[-2] if url.split("/")[-2] else url.split("/")[-3]
         
         # Use simple filename without nested folders
         temp_name = f"ig_{user_id}_{uuid.uuid4().hex[:8]}"
+        folder_path = os.path.join(TEMP_DIR, temp_name)
         
         # Download post directly to TEMP_DIR
         post = instaloader.Post.from_shortcode(ig_loader.context, shortcode)
-        ig_loader.download_post(post, target=os.path.join(TEMP_DIR, temp_name))
+        ig_loader.download_post(post, target=folder_path)
+        
+        # Get caption
+        caption = post.caption if post.caption else "📸 Instagram"
+        if len(caption) > 200:
+            caption = caption[:197] + "..."
+        
         
         # Find media file
         media_file = None
         is_video = False
-        folder_path = os.path.join(TEMP_DIR, temp_name)
         
         if os.path.exists(folder_path):
             for file in os.listdir(folder_path):
@@ -216,12 +223,14 @@ def download_instagram(url, user_id, message):
                     break
         
         if media_file and os.path.exists(media_file):
-            user_data[user_id] = {
-                'file_path': media_file,
-                'folder_path': folder_path,
-                'platform': 'instagram',
-                'is_video': is_video
-            }
+            # Store for MP3 extraction if video
+            if is_video:
+                user_data[user_id] = {
+                    'file_path': media_file,
+                    'folder_path': folder_path,
+                    'platform': 'instagram',
+                    'is_video': is_video
+                }
             
             # Send media
             with open(media_file, 'rb') as file:
@@ -229,20 +238,39 @@ def download_instagram(url, user_id, message):
                     markup = types.InlineKeyboardMarkup()
                     btn_audio = types.InlineKeyboardButton("🎵 MP3 yuklab olish", callback_data=f"extract_audio_{user_id}")
                     markup.add(btn_audio)
-                    bot.send_video(message.chat.id, file, reply_markup=markup)
+                    bot.send_video(message.chat.id, file, caption=caption, reply_markup=markup)
                 else:
-                    bot.send_photo(message.chat.id, file)
+                    bot.send_photo(message.chat.id, file, caption=caption)
             
             # Increment download count
             increment_download_count(user_id)
             
+            # Cleanup if not video (video needs to be kept for MP3)
+            if not is_video and folder_path:
+                try:
+                    shutil.rmtree(folder_path, ignore_errors=True)
+                except:
+                    pass
+            
             return True
         else:
             bot.reply_to(message, "❌ Instagram'dan media topilmadi. Havola to'g'rimi?")
+            # Cleanup failed download
+            if folder_path and os.path.exists(folder_path):
+                try:
+                    shutil.rmtree(folder_path, ignore_errors=True)
+                except:
+                    pass
             return False
             
     except Exception as e:
         bot.reply_to(message, f"❌ Instagram xatosi: {str(e)}")
+        # Cleanup on error
+        if folder_path and os.path.exists(folder_path):
+            try:
+                shutil.rmtree(folder_path, ignore_errors=True)
+            except:
+                pass
         return False
 
 
@@ -361,6 +389,7 @@ def get_youtube_formats(url):
 
 def download_youtube(url, user_id, message, format_id=None):
     """Download YouTube video"""
+    download_path = None
     try:
         download_path = os.path.join(TEMP_DIR, f"youtube_{user_id}_{uuid.uuid4().hex[:8]}.mp4")
         
@@ -370,14 +399,16 @@ def download_youtube(url, user_id, message, format_id=None):
                 'outtmpl': download_path,
                 'quiet': True,
                 'no_warnings': True,
-                'merge_output_format': 'mp4'
+                'merge_output_format': 'mp4',
+                'socket_timeout': 60
             }
         else:
             ydl_opts = {
                 'format': 'best[ext=mp4]/best',
                 'outtmpl': download_path,
                 'quiet': True,
-                'no_warnings': True
+                'no_warnings': True,
+                'socket_timeout': 60
             }
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -410,10 +441,26 @@ def download_youtube(url, user_id, message, format_id=None):
             return True
         else:
             bot.reply_to(message, "❌ Video yuklab olinmadi")
+            if download_path and os.path.exists(download_path):
+                try:
+                    os.remove(download_path)
+                except:
+                    pass
             return False
             
     except Exception as e:
-        bot.reply_to(message, f"❌ YouTube xatosi: {str(e)}")
+        error_msg = str(e)
+        if "timeout" in error_msg.lower() or "connection" in error_msg.lower():
+            bot.reply_to(message, "❌ YouTube xatosi: Tarmoq muammosi. Iltimos, qayta urinib ko'ring.")
+        else:
+            bot.reply_to(message, f"❌ YouTube xatosi: {str(e)}")
+        
+        # Cleanup on error
+        if download_path and os.path.exists(download_path):
+            try:
+                os.remove(download_path)
+            except:
+                pass
         return False
 
 
@@ -424,7 +471,12 @@ def extract_audio(user_id, message):
             bot.send_message(message.chat.id, "❌ Video topilmadi. Iltimos, yangi havola yuboring.")
             return
         
-        video_path = user_data[user_id].get('file_path')
+        user_info = user_data.get(user_id)
+        if not user_info:
+            bot.send_message(message.chat.id, "❌ Video topilmadi. Iltimos, yangi havola yuboring.")
+            return
+        
+        video_path = user_info.get('file_path')
         if not video_path or not os.path.exists(video_path):
             bot.send_message(message.chat.id, "❌ Video topilmadi. Iltimos, yangi havola yuboring.")
             return
