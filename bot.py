@@ -6,6 +6,7 @@ import json
 from datetime import datetime
 from telebot import types
 from dotenv import load_dotenv
+from moviepy.editor import VideoFileClip
 
 # Load environment variables
 load_dotenv()
@@ -103,8 +104,6 @@ def detect_platform(url):
         return 'instagram'
     elif 'tiktok.com' in url_lower:
         return 'tiktok'
-    elif 'pinterest.com' in url_lower or 'pin.it' in url_lower:
-        return 'pinterest'
     elif 'youtube.com' in url_lower or 'youtu.be' in url_lower:
         return 'youtube'
     return None
@@ -121,7 +120,6 @@ def start(message):
 <b>Qo'llab-quvvatlanadigan platformalar:</b>
 📸 Instagram - video/rasm + MP3
 🎵 TikTok - video + MP3
-📌 Pinterest - rasm
 ▶️ YouTube - video (turli sifatlar) + MP3
 
 Havola yuboring! 🚀
@@ -282,65 +280,6 @@ def download_tiktok(url, user_id, message):
             os.remove(download_path)
 
 
-# Pinterest download
-def download_pinterest(url, user_id, message):
-    """Download Pinterest image"""
-    loading_msg = None
-    download_path = None
-    try:
-        loading_msg = bot.send_message(message.chat.id, "⏳ Pinterest yuklanmoqda...")
-        download_path = f"pinterest_{user_id}.jpg"
-        
-        ydl_opts = {
-            'format': 'best',
-            'outtmpl': download_path,
-            'quiet': True,
-            'no_warnings': True,
-            'http_headers': {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            }
-        }
-        
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([url])
-        
-        if os.path.exists(download_path) and os.path.getsize(download_path) > 0:
-            with open(download_path, 'rb') as photo:
-                try:
-                    bot.send_photo(message.chat.id, photo)
-                except Exception as e:
-                    photo.seek(0)
-                    try:
-                        bot.send_document(message.chat.id, photo, caption="📌 Pinterest")
-                    except:
-                        raise e
-            
-            os.remove(download_path)
-            bot.delete_message(message.chat.id, loading_msg.message_id)
-            increment_download_count(user_id)
-        else:
-            bot.delete_message(message.chat.id, loading_msg.message_id)
-            bot.reply_to(message, "❌ Pinterest yuklab olinmadi (havola private bo'lishi mumkin)")
-            if download_path and os.path.exists(download_path):
-                os.remove(download_path)
-    
-    except Exception as e:
-        if loading_msg:
-            try:
-                bot.delete_message(message.chat.id, loading_msg.message_id)
-            except:
-                pass
-        error_msg = str(e)
-        if 'private' in error_msg.lower() or '403' in error_msg or '404' in error_msg:
-            bot.reply_to(message, "❌ Pinterest: Rasm private yoki topilmadi")
-        else:
-            bot.reply_to(message, "❌ Pinterest yuklab olinmadi")
-        if download_path and os.path.exists(download_path):
-            try:
-                os.remove(download_path)
-            except:
-                pass
-
 
 # YouTube quality selection
 def get_youtube_formats(url):
@@ -426,44 +365,36 @@ def download_youtube(url, user_id, message, format_id=None):
             os.remove(download_path)
 
 
-# MP3 extraction
+# MP3 extraction with MoviePy
 def extract_audio(user_id, message):
-    """Extract MP3 from video"""
+    """Extract MP3 from video using MoviePy"""
     loading_msg = None
     audio_path = None
+    video_clip = None
     try:
         if user_id not in user_data:
-            bot.send_message(message.chat.id, "❌ Video topilmadi")
+            bot.send_message(message.chat.id, "❌ Video topilmadi. Yangi havola yuboring.")
             return
         
         video_path = user_data[user_id].get('file_path')
         if not video_path or not os.path.exists(video_path):
-            bot.send_message(message.chat.id, "❌ Video topilmadi")
+            bot.send_message(message.chat.id, "❌ Video topilmadi. Yangi havola yuboring.")
             return
         
         loading_msg = bot.send_message(message.chat.id, "⏳ MP3 yuklanmoqda...")
-        audio_path = f"audio_{user_id}"
+        audio_path = f"audio_{user_id}.mp3"
         
-        ydl_opts = {
-            'format': 'bestaudio/best',
-            'postprocessors': [{
-                'key': 'FFmpegExtractAudio',
-                'preferredcodec': 'mp3',
-                'preferredquality': '192',
-            }],
-            'outtmpl': audio_path,
-            'quiet': True,
-            'no_warnings': True
-        }
+        # Extract audio using MoviePy
+        video_clip = VideoFileClip(video_path)
+        video_clip.audio.write_audiofile(audio_path, logger=None)
+        video_clip.close()
         
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([video_path])
-        
-        audio_file = f"{audio_path}.mp3"
-        if os.path.exists(audio_file):
-            with open(audio_file, 'rb') as audio:
+        if os.path.exists(audio_path) and os.path.getsize(audio_path) > 0:
+            with open(audio_path, 'rb') as audio:
                 bot.send_audio(message.chat.id, audio)
-            os.remove(audio_file)
+            
+            # Cleanup audio file
+            os.remove(audio_path)
             
             # Cleanup video after MP3
             if video_path and os.path.exists(video_path):
@@ -496,21 +427,23 @@ def extract_audio(user_id, message):
             bot.reply_to(message, "❌ MP3 yuklab olinmadi")
     
     except Exception as e:
+        if video_clip:
+            try:
+                video_clip.close()
+            except:
+                pass
+        
         if loading_msg:
             try:
                 bot.delete_message(message.chat.id, loading_msg.message_id)
             except:
                 pass
         
-        error_msg = str(e).lower()
-        if 'ffmpeg' in error_msg or 'postprocessor' in error_msg:
-            bot.reply_to(message, "❌ MP3 yuklab olinmadi: FFmpeg o'rnatilmagan. Server administratoriga murojaat qiling.")
-        else:
-            bot.reply_to(message, f"❌ MP3 xatosi: {str(e)}")
+        bot.reply_to(message, f"❌ MP3 xatosi: Video faylida audio yo'q yoki fayl buzilgan")
         
-        if audio_path and os.path.exists(f"{audio_path}.mp3"):
+        if audio_path and os.path.exists(audio_path):
             try:
-                os.remove(f"{audio_path}.mp3")
+                os.remove(audio_path)
             except:
                 pass
 
@@ -732,7 +665,7 @@ def handle_message(message):
     
     # Check for buttons
     if text == "📖 Yordam":
-        bot.reply_to(message, "Havola yuboring: Instagram, TikTok, Pinterest yoki YouTube")
+        bot.reply_to(message, "Havola yuboring: Instagram, TikTok yoki YouTube")
         return
     
     if text == "👑 Admin Panel" and is_admin(user_id):
@@ -746,8 +679,6 @@ def handle_message(message):
         download_instagram(text, user_id, message)
     elif platform == 'tiktok':
         download_tiktok(text, user_id, message)
-    elif platform == 'pinterest':
-        download_pinterest(text, user_id, message)
     elif platform == 'youtube':
         # Show quality selection
         formats, title = get_youtube_formats(text)
@@ -776,7 +707,7 @@ def handle_message(message):
         else:
             bot.reply_to(message, "❌ YouTube yuklab olinmadi")
     else:
-        bot.reply_to(message, "❌ Noma'lum havola. Instagram, TikTok, Pinterest yoki YouTube havolasini yuboring.")
+        bot.reply_to(message, "❌ Noma'lum havola. Instagram, TikTok yoki YouTube havolasini yuboring.")
 
 
 bot.infinity_polling()
