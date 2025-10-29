@@ -6,16 +6,25 @@ import json
 from datetime import datetime
 from telebot import types
 from dotenv import load_dotenv
-from moviepy.editor import VideoFileClip
+from moviepy import VideoFileClip
+import shutil
 
 # Load environment variables
 load_dotenv()
-BOT_TOKEN = os.getenv('BOT_TOKEN', '').strip()
-ADMIN_ID_STR = os.getenv('ADMIN_ID', '0').strip()
+BOT_TOKEN = os.getenv('BOT_TOKEN', '')
+if BOT_TOKEN:
+    BOT_TOKEN = BOT_TOKEN.strip()
+
+ADMIN_ID_STR = os.getenv('ADMIN_ID', '0')
+if ADMIN_ID_STR:
+    ADMIN_ID_STR = ADMIN_ID_STR.strip()
+
 try:
     ADMIN_ID = int(ADMIN_ID_STR)
 except:
     ADMIN_ID = 0
+
+print(f"Bot started. Admin ID: {ADMIN_ID}")
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
@@ -28,7 +37,7 @@ USERS_DB_FILE = "users_db.json"
 loader = instaloader.Instaloader(
     download_comments=False,
     download_geotags=False,
-    download_pictures=False,
+    download_pictures=True,  # Enable for carousel
     download_video_thumbnails=False,
     save_metadata=False,
 )
@@ -160,19 +169,20 @@ def download_instagram(url, user_id, message):
         if len(caption) > 1000:
             caption = caption[:997] + "..."
         
-        # Find media file
-        video_file = None
-        photo_file = None
+        # Find all media files
+        video_files = []
+        photo_files = []
         for file in os.listdir(shortcode):
+            file_path = os.path.join(shortcode, file)
             if file.endswith(".mp4"):
-                video_file = os.path.join(shortcode, file)
-                break
+                video_files.append(file_path)
             elif file.endswith((".jpg", ".png")):
-                photo_file = os.path.join(shortcode, file)
+                photo_files.append(file_path)
         
         # Send media
-        if video_file:
-            with open(video_file, "rb") as video:
+        if video_files:
+            # Send first video with buttons
+            with open(video_files[0], "rb") as video:
                 markup = types.InlineKeyboardMarkup()
                 btn_audio = types.InlineKeyboardButton("🎵 MP3 yuklab olish", callback_data=f"extract_audio_{user_id}")
                 btn_caption = types.InlineKeyboardButton("📝 Description", callback_data=f"show_caption_{user_id}")
@@ -183,26 +193,64 @@ def download_instagram(url, user_id, message):
                     video.seek(0)
                     bot.send_video(message.chat.id, video, reply_markup=markup)
             
+            # Send other videos if any
+            for video_path in video_files[1:]:
+                with open(video_path, "rb") as video:
+                    bot.send_video(message.chat.id, video)
+            
             # Store for MP3 and caption
             user_data[user_id] = {
-                'file_path': video_file,
+                'file_path': video_files[0],
                 'folder_path': shortcode,
                 'platform': 'instagram',
                 'caption': caption
             }
             
-        elif photo_file:
-            with open(photo_file, "rb") as photo:
-                try:
-                    bot.send_photo(message.chat.id, photo, caption=caption)
-                except:
-                    photo.seek(0)
-                    bot.send_photo(message.chat.id, photo)
+        elif photo_files:
+            # Send all photos
+            if len(photo_files) == 1:
+                # Single photo with caption
+                with open(photo_files[0], "rb") as photo:
+                    markup = types.InlineKeyboardMarkup()
+                    btn_caption = types.InlineKeyboardButton("📝 Description", callback_data=f"show_caption_{user_id}")
+                    markup.add(btn_caption)
+                    try:
+                        bot.send_photo(message.chat.id, photo, caption=caption, reply_markup=markup)
+                    except:
+                        photo.seek(0)
+                        bot.send_photo(message.chat.id, photo, reply_markup=markup)
+                    
+                    # Store caption
+                    user_data[user_id] = {
+                        'folder_path': shortcode,
+                        'platform': 'instagram',
+                        'caption': caption
+                    }
+            else:
+                # Multiple photos (carousel)
+                for i, photo_path in enumerate(photo_files):
+                    with open(photo_path, "rb") as photo:
+                        if i == 0:
+                            # First photo with description button
+                            markup = types.InlineKeyboardMarkup()
+                            btn_caption = types.InlineKeyboardButton("📝 Description", callback_data=f"show_caption_{user_id}")
+                            markup.add(btn_caption)
+                            bot.send_photo(message.chat.id, photo, caption=f"📸 {i+1}/{len(photo_files)}", reply_markup=markup)
+                            
+                            # Store caption
+                            user_data[user_id] = {
+                                'folder_path': shortcode,
+                                'platform': 'instagram',
+                                'caption': caption
+                            }
+                        else:
+                            bot.send_photo(message.chat.id, photo, caption=f"📸 {i+1}/{len(photo_files)}")
             
             # Cleanup immediately for photos
-            for f in os.listdir(shortcode):
-                os.remove(os.path.join(shortcode, f))
-            os.rmdir(shortcode)
+            try:
+                shutil.rmtree(shortcode, ignore_errors=True)
+            except:
+                pass
         else:
             bot.delete_message(message.chat.id, loading_msg.message_id)
             bot.reply_to(message, "❌ Media topilmadi")
@@ -396,25 +444,13 @@ def extract_audio(user_id, message):
             # Cleanup audio file
             os.remove(audio_path)
             
-            # Cleanup video after MP3
-            if video_path and os.path.exists(video_path):
+            # Cleanup video after MP3 (videodownloader.py style)
+            folder = user_data[user_id].get('folder_path')
+            if folder and os.path.exists(folder):
+                shutil.rmtree(folder, ignore_errors=True)
+            elif video_path and os.path.exists(video_path) and os.path.isfile(video_path):
                 try:
-                    folder = user_data[user_id].get('folder_path')
-                    if folder and os.path.exists(folder):
-                        for f in os.listdir(folder):
-                            try:
-                                os.remove(os.path.join(folder, f))
-                            except:
-                                pass
-                        try:
-                            os.rmdir(folder)
-                        except:
-                            pass
-                    elif os.path.isfile(video_path):
-                        try:
-                            os.remove(video_path)
-                        except:
-                            pass
+                    os.remove(video_path)
                 except:
                     pass
             
