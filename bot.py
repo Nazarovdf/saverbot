@@ -3,6 +3,7 @@ import instaloader
 import yt_dlp
 import os
 import json
+import uuid
 from datetime import datetime
 from telebot import types
 from dotenv import load_dotenv
@@ -180,12 +181,16 @@ def download_instagram(url, user_id, message):
         # Find all media files
         video_files = []
         photo_files = []
-        for file in os.listdir(shortcode):
+        all_files = sorted(os.listdir(shortcode))  # Sort for correct order
+        
+        for file in all_files:
             file_path = os.path.join(shortcode, file)
             if file.endswith(".mp4"):
                 video_files.append(file_path)
             elif file.endswith((".jpg", ".png")):
                 photo_files.append(file_path)
+        
+        print(f"📊 Found {len(video_files)} videos, {len(photo_files)} photos")  # Debug
         
         # Send media
         if video_files:
@@ -236,23 +241,27 @@ def download_instagram(url, user_id, message):
                     }
             else:
                 # Multiple photos (carousel)
-                for i, photo_path in enumerate(photo_files):
-                    with open(photo_path, "rb") as photo:
-                        if i == 0:
-                            # First photo with description button
-                            markup = types.InlineKeyboardMarkup()
-                            btn_caption = types.InlineKeyboardButton("📝 Description", callback_data=f"show_caption_{user_id}")
-                            markup.add(btn_caption)
-                            bot.send_photo(message.chat.id, photo, caption=f"📸 {i+1}/{len(photo_files)}", reply_markup=markup)
-                            
-                            # Store caption
-                            user_data[user_id] = {
-                                'folder_path': shortcode,
-                                'platform': 'instagram',
-                                'caption': caption
-                            }
-                        else:
-                            bot.send_photo(message.chat.id, photo, caption=f"📸 {i+1}/{len(photo_files)}")
+                print(f"📸 Sending {len(photo_files)} photos...")
+                
+                # First photo with description button
+                with open(photo_files[0], "rb") as photo:
+                    markup = types.InlineKeyboardMarkup()
+                    btn_caption = types.InlineKeyboardButton("📝 Description", callback_data=f"show_caption_{user_id}")
+                    markup.add(btn_caption)
+                    bot.send_photo(message.chat.id, photo, caption=f"📸 1/{len(photo_files)}", reply_markup=markup)
+                
+                # Store caption
+                user_data[user_id] = {
+                    'folder_path': shortcode,
+                    'platform': 'instagram',
+                    'caption': caption
+                }
+                
+                # Send remaining photos
+                for i in range(1, len(photo_files)):
+                    with open(photo_files[i], "rb") as photo:
+                        bot.send_photo(message.chat.id, photo, caption=f"📸 {i+1}/{len(photo_files)}")
+                        print(f"  ✅ Sent photo {i+1}/{len(photo_files)}")
             
             # Cleanup immediately for photos
             try:
@@ -421,75 +430,50 @@ def download_youtube(url, user_id, message, format_id=None):
             os.remove(download_path)
 
 
-# MP3 extraction with MoviePy
+# MP3 extraction (videodownloader.py style)
 def extract_audio(user_id, message):
-    """Extract MP3 from video using MoviePy"""
-    loading_msg = None
-    audio_path = None
-    video_clip = None
+    """Extract MP3 from video using MoviePy (videodownloader.py algorithm)"""
     try:
         if user_id not in user_data:
             bot.send_message(message.chat.id, "❌ Video topilmadi. Yangi havola yuboring.")
             return
         
         video_path = user_data[user_id].get('file_path')
+        folder_path = user_data[user_id].get('folder_path')
+        
         if not video_path or not os.path.exists(video_path):
             bot.send_message(message.chat.id, "❌ Video topilmadi. Yangi havola yuboring.")
             return
         
-        loading_msg = bot.send_message(message.chat.id, "⏳ MP3 yuklanmoqda...")
-        audio_path = f"audio_{user_id}.mp3"
+        bot.send_message(message.chat.id, "⏳ MP3 yuklanmoqda...")
         
-        # Extract audio using MoviePy
-        video_clip = VideoFileClip(video_path)
-        video_clip.audio.write_audiofile(audio_path, logger=None)
-        video_clip.close()
+        # Extract audio using MoviePy (videodownloader.py style)
+        video = VideoFileClip(video_path)
+        audio = video.audio
+        audio_name = f"{uuid.uuid4()}.mp3"
+        audio.write_audiofile(audio_name, logger=None)
+        video.close()
         
-        if os.path.exists(audio_path) and os.path.getsize(audio_path) > 0:
-            with open(audio_path, 'rb') as audio:
-                bot.send_audio(message.chat.id, audio)
-            
-            # Cleanup audio file
-            os.remove(audio_path)
-            
-            # Cleanup video after MP3 (videodownloader.py style)
-            folder = user_data[user_id].get('folder_path')
-            if folder and os.path.exists(folder):
-                shutil.rmtree(folder, ignore_errors=True)
-            elif video_path and os.path.exists(video_path) and os.path.isfile(video_path):
-                try:
-                    os.remove(video_path)
-                except:
-                    pass
-            
-            # Cleanup all remaining folders
-            cleanup_all_folders()
-            
-            bot.delete_message(message.chat.id, loading_msg.message_id)
-        else:
-            bot.delete_message(message.chat.id, loading_msg.message_id)
-            bot.reply_to(message, "❌ MP3 yuklab olinmadi")
-    
+        # Send audio
+        with open(audio_name, "rb") as audio_file:
+            bot.send_audio(message.chat.id, audio_file)
+        
+        # Cleanup audio file
+        os.remove(audio_name)
+        
+        # Cleanup folder (videodownloader.py style - finally block)
+        if folder_path and os.path.exists(folder_path):
+            shutil.rmtree(folder_path, ignore_errors=True)
+            print(f"✅ Cleaned up folder: {folder_path}")
+        
+        # Cleanup all remaining folders
+        cleanup_all_folders()
+        
     except Exception as e:
-        if video_clip:
-            try:
-                video_clip.close()
-            except:
-                pass
-        
-        if loading_msg:
-            try:
-                bot.delete_message(message.chat.id, loading_msg.message_id)
-            except:
-                pass
-        
-        bot.reply_to(message, f"❌ MP3 xatosi: Video faylida audio yo'q yoki fayl buzilgan")
-        
-        if audio_path and os.path.exists(audio_path):
-            try:
-                os.remove(audio_path)
-            except:
-                pass
+        bot.reply_to(message, f"❌ MP3 xatosi: {str(e)}")
+        print(f"❌ MP3 error: {e}")
+        import traceback
+        traceback.print_exc()
 
 
 # Callback handler
