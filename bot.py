@@ -24,7 +24,13 @@ bot = telebot.TeleBot(BOT_TOKEN)
 
 # Directory for temporary files
 TEMP_DIR = "temp_downloads"
-os.makedirs(TEMP_DIR, exist_ok=True)
+
+def ensure_temp_dir():
+    """Ensure temp directory exists"""
+    if not os.path.exists(TEMP_DIR):
+        os.makedirs(TEMP_DIR, exist_ok=True)
+
+ensure_temp_dir()
 
 # User data storage
 user_data = {}
@@ -190,6 +196,9 @@ def download_instagram(url, user_id, message):
     """Download Instagram video/image"""
     folder_path = None
     try:
+        # Ensure temp directory exists
+        ensure_temp_dir()
+        
         # Extract shortcode
         shortcode = url.split("/")[-2] if url.split("/")[-2] else url.split("/")[-3]
         
@@ -197,7 +206,10 @@ def download_instagram(url, user_id, message):
         temp_name = f"ig_{user_id}_{uuid.uuid4().hex[:8]}"
         folder_path = os.path.join(TEMP_DIR, temp_name)
         
-        # Download post directly to TEMP_DIR
+        # Create folder explicitly
+        os.makedirs(folder_path, exist_ok=True)
+        
+        # Download post
         post = instaloader.Post.from_shortcode(ig_loader.context, shortcode)
         ig_loader.download_post(post, target=folder_path)
         
@@ -233,14 +245,25 @@ def download_instagram(url, user_id, message):
                 }
             
             # Send media
-            with open(media_file, 'rb') as file:
-                if is_video:
-                    markup = types.InlineKeyboardMarkup()
-                    btn_audio = types.InlineKeyboardButton("🎵 MP3 yuklab olish", callback_data=f"extract_audio_{user_id}")
-                    markup.add(btn_audio)
-                    bot.send_video(message.chat.id, file, caption=caption, reply_markup=markup)
-                else:
-                    bot.send_photo(message.chat.id, file, caption=caption)
+            try:
+                with open(media_file, 'rb') as file:
+                    if is_video:
+                        markup = types.InlineKeyboardMarkup()
+                        btn_audio = types.InlineKeyboardButton("🎵 MP3 yuklab olish", callback_data=f"extract_audio_{user_id}")
+                        markup.add(btn_audio)
+                        bot.send_video(message.chat.id, file, caption=caption, reply_markup=markup)
+                    else:
+                        bot.send_photo(message.chat.id, file, caption=caption)
+            except Exception as send_error:
+                # If sending fails, try without caption
+                with open(media_file, 'rb') as file:
+                    if is_video:
+                        markup = types.InlineKeyboardMarkup()
+                        btn_audio = types.InlineKeyboardButton("🎵 MP3 yuklab olish", callback_data=f"extract_audio_{user_id}")
+                        markup.add(btn_audio)
+                        bot.send_video(message.chat.id, file, reply_markup=markup)
+                    else:
+                        bot.send_photo(message.chat.id, file)
             
             # Increment download count
             increment_download_count(user_id)
@@ -277,6 +300,7 @@ def download_instagram(url, user_id, message):
 def download_tiktok(url, user_id, message):
     """Download TikTok video"""
     try:
+        ensure_temp_dir()
         download_path = os.path.join(TEMP_DIR, f"tiktok_{user_id}_{uuid.uuid4().hex[:8]}.mp4")
         
         ydl_opts = {
@@ -318,6 +342,7 @@ def download_tiktok(url, user_id, message):
 def download_pinterest(url, user_id, message):
     """Download Pinterest image"""
     try:
+        ensure_temp_dir()
         download_path = os.path.join(TEMP_DIR, f"pinterest_{user_id}_{uuid.uuid4().hex[:8]}.jpg")
         
         # Use yt-dlp to download
@@ -391,6 +416,7 @@ def download_youtube(url, user_id, message, format_id=None):
     """Download YouTube video"""
     download_path = None
     try:
+        ensure_temp_dir()
         download_path = os.path.join(TEMP_DIR, f"youtube_{user_id}_{uuid.uuid4().hex[:8]}.mp4")
         
         if format_id:
@@ -424,15 +450,17 @@ def download_youtube(url, user_id, message, format_id=None):
             # Check file size (Telegram limit is 50MB for videos)
             file_size = os.path.getsize(download_path)
             
-            with open(download_path, 'rb') as video:
-                markup = types.InlineKeyboardMarkup()
-                btn_audio = types.InlineKeyboardButton("🎵 MP3 yuklab olish", callback_data=f"extract_audio_{user_id}")
-                markup.add(btn_audio)
-                
-                if file_size > 50 * 1024 * 1024:
-                    # Send as document if too large
-                    bot.send_document(message.chat.id, video, caption="📹 Video (>50MB)", reply_markup=markup)
-                else:
+            markup = types.InlineKeyboardMarkup()
+            btn_audio = types.InlineKeyboardButton("🎵 MP3 yuklab olish", callback_data=f"extract_audio_{user_id}")
+            markup.add(btn_audio)
+            
+            if file_size > 50 * 1024 * 1024:
+                # Send as document if too large (>50MB)
+                with open(download_path, 'rb') as video:
+                    bot.send_document(message.chat.id, video, caption=f"📹 Video ({file_size / (1024*1024):.1f}MB)", reply_markup=markup)
+            else:
+                # Send as video if <50MB
+                with open(download_path, 'rb') as video:
                     bot.send_video(message.chat.id, video, reply_markup=markup)
             
             # Increment download count
@@ -466,6 +494,7 @@ def download_youtube(url, user_id, message, format_id=None):
 
 def extract_audio(user_id, message):
     """Extract audio from video"""
+    audio_path = None
     try:
         if user_id not in user_data:
             bot.send_message(message.chat.id, "❌ Video topilmadi. Iltimos, yangi havola yuboring.")
@@ -483,6 +512,7 @@ def extract_audio(user_id, message):
         
         loading_msg = bot.send_message(message.chat.id, "⏳ MP3 yuklanmoqda...")
         
+        ensure_temp_dir()
         audio_path = os.path.join(TEMP_DIR, f"audio_{user_id}_{uuid.uuid4().hex[:8]}")
         
         # Extract audio using yt-dlp
@@ -513,8 +543,15 @@ def extract_audio(user_id, message):
                 bot.send_message(message.chat.id, "❌ Audio ajratishda xatolik")
         except Exception as e:
             bot.send_message(message.chat.id, f"❌ Audio xatosi: FFmpeg o'rnatilmagan bo'lishi mumkin")
+        finally:
+            # Cleanup audio file
+            if audio_path and os.path.exists(f"{audio_path}.mp3"):
+                try:
+                    os.remove(f"{audio_path}.mp3")
+                except:
+                    pass
         
-        # Cleanup
+        # Cleanup video
         cleanup_user_files(user_id)
         
         # Delete loading message
@@ -525,6 +562,12 @@ def extract_audio(user_id, message):
         
     except Exception as e:
         bot.send_message(message.chat.id, f"❌ Audio xatosi: {str(e)}")
+        # Cleanup on error
+        if audio_path and os.path.exists(f"{audio_path}.mp3"):
+            try:
+                os.remove(f"{audio_path}.mp3")
+            except:
+                pass
 
 
 @bot.message_handler(commands=['examples'])
