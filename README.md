@@ -1,5 +1,11 @@
 # 🎬 Media Downloader Bot
 
+## 🔧 Yangi funksiyalar (v2.1):
+- ✅ Instagram Description button
+- ✅ Yaxshilangan MP3 extraction (FFmpeg error handling)
+- ✅ YouTube katta hajm support
+- ✅ Admin ID parsing fix
+
 Telegram bot for downloading media from Instagram, TikTok, Pinterest, and YouTube.
 
 ## ✨ Features

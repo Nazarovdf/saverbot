@@ -9,8 +9,12 @@ from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
-BOT_TOKEN = os.getenv('BOT_TOKEN')
-ADMIN_ID = int(os.getenv('ADMIN_ID', '0')) if os.getenv('ADMIN_ID', '0').isdigit() else 0
+BOT_TOKEN = os.getenv('BOT_TOKEN', '').strip()
+ADMIN_ID_STR = os.getenv('ADMIN_ID', '0').strip()
+try:
+    ADMIN_ID = int(ADMIN_ID_STR)
+except:
+    ADMIN_ID = 0
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
@@ -159,18 +163,20 @@ def download_instagram(url, user_id, message):
             with open(video_file, "rb") as video:
                 markup = types.InlineKeyboardMarkup()
                 btn_audio = types.InlineKeyboardButton("🎵 MP3 yuklab olish", callback_data=f"extract_audio_{user_id}")
-                markup.add(btn_audio)
+                btn_caption = types.InlineKeyboardButton("📝 Description", callback_data=f"show_caption_{user_id}")
+                markup.row(btn_audio, btn_caption)
                 try:
-                    bot.send_video(message.chat.id, video, caption=caption, reply_markup=markup)
+                    bot.send_video(message.chat.id, video, reply_markup=markup)
                 except:
                     video.seek(0)
                     bot.send_video(message.chat.id, video, reply_markup=markup)
             
-            # Store for MP3
+            # Store for MP3 and caption
             user_data[user_id] = {
                 'file_path': video_file,
                 'folder_path': shortcode,
-                'platform': 'instagram'
+                'platform': 'instagram',
+                'caption': caption
             }
             
         elif photo_file:
@@ -334,16 +340,18 @@ def download_youtube(url, user_id, message, format_id=None):
         
         if format_id:
             ydl_opts = {
-                'format': format_id,
+                'format': f'{format_id}+bestaudio/best',
                 'outtmpl': download_path,
                 'quiet': True,
+                'no_warnings': True,
                 'merge_output_format': 'mp4'
             }
         else:
             ydl_opts = {
-                'format': 'best[ext=mp4]/best',
+                'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
                 'outtmpl': download_path,
-                'quiet': True
+                'quiet': True,
+                'no_warnings': True
             }
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -408,7 +416,8 @@ def extract_audio(user_id, message):
                 'preferredquality': '192',
             }],
             'outtmpl': audio_path,
-            'quiet': True
+            'quiet': True,
+            'no_warnings': True
         }
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -419,20 +428,43 @@ def extract_audio(user_id, message):
             with open(audio_file, 'rb') as audio:
                 bot.send_audio(message.chat.id, audio)
             os.remove(audio_file)
+            
+            # Cleanup video after MP3
+            if video_path and os.path.exists(video_path):
+                try:
+                    folder = user_data[user_id].get('folder_path')
+                    if folder and os.path.exists(folder):
+                        for f in os.listdir(folder):
+                            os.remove(os.path.join(folder, f))
+                        os.rmdir(folder)
+                    elif os.path.isfile(video_path):
+                        os.remove(video_path)
+                except:
+                    pass
+            
             bot.delete_message(message.chat.id, loading_msg.message_id)
         else:
             bot.delete_message(message.chat.id, loading_msg.message_id)
             bot.reply_to(message, "❌ MP3 yuklab olinmadi")
     
-    except Exception:
+    except Exception as e:
         if loading_msg:
             try:
                 bot.delete_message(message.chat.id, loading_msg.message_id)
             except:
                 pass
-        bot.reply_to(message, "❌ MP3 yuklab olinmadi (FFmpeg kerak)")
+        
+        error_msg = str(e).lower()
+        if 'ffmpeg' in error_msg or 'postprocessor' in error_msg:
+            bot.reply_to(message, "❌ MP3 yuklab olinmadi: FFmpeg o'rnatilmagan. Server administratoriga murojaat qiling.")
+        else:
+            bot.reply_to(message, f"❌ MP3 xatosi: {str(e)}")
+        
         if audio_path and os.path.exists(f"{audio_path}.mp3"):
-            os.remove(f"{audio_path}.mp3")
+            try:
+                os.remove(f"{audio_path}.mp3")
+            except:
+                pass
 
 
 # Callback handler
@@ -456,6 +488,13 @@ def callback_handler(call):
         
         if call.data.startswith("extract_audio_"):
             extract_audio(user_id, call.message)
+        
+        elif call.data.startswith("show_caption_"):
+            if user_id in user_data:
+                caption = user_data[user_id].get('caption', 'Caption topilmadi')
+                bot.send_message(call.message.chat.id, f"📝 <b>Description:</b>\n\n{caption}", parse_mode='HTML')
+            else:
+                bot.send_message(call.message.chat.id, "❌ Caption topilmadi")
         
         elif call.data.startswith("yt_quality_"):
             parts = call.data.split("_")
