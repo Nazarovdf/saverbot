@@ -4,6 +4,9 @@
 # User database
 users_db.json
 
+# Temporary downloads
+temp_downloads/
+
 # Python
 __pycache__/
 *.py[cod]
