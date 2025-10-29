@@ -80,6 +80,20 @@ def is_admin(user_id):
     """Check if user is admin"""
     return ADMIN_ID != 0 and user_id == ADMIN_ID
 
+def cleanup_all_folders():
+    """Cleanup all temporary Instagram folders"""
+    try:
+        for item in os.listdir('.'):
+            if os.path.isdir(item) and len(item) == 11:  # Instagram shortcode length
+                try:
+                    for f in os.listdir(item):
+                        os.remove(os.path.join(item, f))
+                    os.rmdir(item)
+                except:
+                    pass
+    except:
+        pass
+
 
 # Platform detection
 def detect_platform(url):
@@ -201,6 +215,9 @@ def download_instagram(url, user_id, message):
         
         # Increment counter
         increment_download_count(user_id)
+        
+        # Cleanup all shortcode folders
+        cleanup_all_folders()
     
     except Exception as e:
         if loading_msg:
@@ -277,36 +294,52 @@ def download_pinterest(url, user_id, message):
         ydl_opts = {
             'format': 'best',
             'outtmpl': download_path,
-            'quiet': True
+            'quiet': True,
+            'no_warnings': True,
+            'http_headers': {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            }
         }
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([url])
         
-        if os.path.exists(download_path):
+        if os.path.exists(download_path) and os.path.getsize(download_path) > 0:
             with open(download_path, 'rb') as photo:
                 try:
                     bot.send_photo(message.chat.id, photo)
-                except:
+                except Exception as e:
                     photo.seek(0)
-                    bot.send_document(message.chat.id, photo, caption="📌 Pinterest")
+                    try:
+                        bot.send_document(message.chat.id, photo, caption="📌 Pinterest")
+                    except:
+                        raise e
             
             os.remove(download_path)
             bot.delete_message(message.chat.id, loading_msg.message_id)
             increment_download_count(user_id)
         else:
             bot.delete_message(message.chat.id, loading_msg.message_id)
-            bot.reply_to(message, "❌ Pinterest yuklab olinmadi")
+            bot.reply_to(message, "❌ Pinterest yuklab olinmadi (havola private bo'lishi mumkin)")
+            if download_path and os.path.exists(download_path):
+                os.remove(download_path)
     
-    except Exception:
+    except Exception as e:
         if loading_msg:
             try:
                 bot.delete_message(message.chat.id, loading_msg.message_id)
             except:
                 pass
-        bot.reply_to(message, "❌ Pinterest yuklab olinmadi")
+        error_msg = str(e)
+        if 'private' in error_msg.lower() or '403' in error_msg or '404' in error_msg:
+            bot.reply_to(message, "❌ Pinterest: Rasm private yoki topilmadi")
+        else:
+            bot.reply_to(message, "❌ Pinterest yuklab olinmadi")
         if download_path and os.path.exists(download_path):
-            os.remove(download_path)
+            try:
+                os.remove(download_path)
+            except:
+                pass
 
 
 # YouTube quality selection
@@ -318,7 +351,8 @@ def get_youtube_formats(url):
             info = ydl.extract_info(url, download=False)
             formats = {}
             for f in info['formats']:
-                if f.get('vcodec') != 'none' and f.get('acodec') != 'none':
+                # Get formats with both video and audio, or at least video
+                if f.get('vcodec') != 'none':
                     height = f.get('height')
                     if height and height >= 144:
                         quality = f"{height}p"
@@ -340,18 +374,20 @@ def download_youtube(url, user_id, message, format_id=None):
         
         if format_id:
             ydl_opts = {
-                'format': f'{format_id}+bestaudio/best',
+                'format': f'{format_id}+bestaudio/best[ext=m4a]/best',
+                'outtmpl': download_path,
+                'quiet': True,
+                'no_warnings': True,
+                'merge_output_format': 'mp4',
+                'postprocessors': [{'key': 'FFmpegVideoConvertor', 'preferedformat': 'mp4'}]
+            }
+        else:
+            ydl_opts = {
+                'format': 'bestvideo[ext=mp4][height<=1080]+bestaudio[ext=m4a]/best[ext=mp4]/best',
                 'outtmpl': download_path,
                 'quiet': True,
                 'no_warnings': True,
                 'merge_output_format': 'mp4'
-            }
-        else:
-            ydl_opts = {
-                'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
-                'outtmpl': download_path,
-                'quiet': True,
-                'no_warnings': True
             }
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -435,12 +471,24 @@ def extract_audio(user_id, message):
                     folder = user_data[user_id].get('folder_path')
                     if folder and os.path.exists(folder):
                         for f in os.listdir(folder):
-                            os.remove(os.path.join(folder, f))
-                        os.rmdir(folder)
+                            try:
+                                os.remove(os.path.join(folder, f))
+                            except:
+                                pass
+                        try:
+                            os.rmdir(folder)
+                        except:
+                            pass
                     elif os.path.isfile(video_path):
-                        os.remove(video_path)
+                        try:
+                            os.remove(video_path)
+                        except:
+                            pass
                 except:
                     pass
+            
+            # Cleanup all remaining folders
+            cleanup_all_folders()
             
             bot.delete_message(message.chat.id, loading_msg.message_id)
         else:
