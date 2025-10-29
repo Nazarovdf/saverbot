@@ -193,105 +193,122 @@ def send_welcome(message):
 
 
 def download_instagram(url, user_id, message):
-    """Download Instagram video/image"""
-    folder_path = None
+    """Download Instagram video/image - videodownloader.py style"""
+    shortcode = None
+    loading_msg = None
     try:
-        # Ensure temp directory exists
-        ensure_temp_dir()
-        
         # Extract shortcode
-        shortcode = url.split("/")[-2] if url.split("/")[-2] else url.split("/")[-3]
+        try:
+            shortcode = url.split("/")[-2] if url.split("/")[-2] else url.split("/")[-3]
+        except IndexError:
+            bot.reply_to(message, "❌ Link noto'g'ri")
+            return False
         
-        # Use simple filename without nested folders
-        temp_name = f"ig_{user_id}_{uuid.uuid4().hex[:8]}"
-        folder_path = os.path.join(TEMP_DIR, temp_name)
+        # Show loading message
+        loading_msg = bot.send_message(message.chat.id, "⏳ Instagram yuklanmoqda...")
         
-        # Create folder explicitly
-        os.makedirs(folder_path, exist_ok=True)
-        
-        # Download post
+        # Download post (simple folder name, like videodownloader.py)
         post = instaloader.Post.from_shortcode(ig_loader.context, shortcode)
-        ig_loader.download_post(post, target=folder_path)
+        ig_loader.download_post(post, target=shortcode)
         
         # Get caption
         caption = post.caption if post.caption else "📸 Instagram"
-        if len(caption) > 200:
-            caption = caption[:197] + "..."
+        if len(caption) > 1000:
+            caption = caption[:997] + "..."
         
         
         # Find media file
         media_file = None
         is_video = False
         
-        if os.path.exists(folder_path):
-            for file in os.listdir(folder_path):
-                file_path = os.path.join(folder_path, file)
+        if os.path.exists(shortcode):
+            for file in os.listdir(shortcode):
                 if file.endswith(".mp4"):
-                    media_file = file_path
+                    media_file = os.path.join(shortcode, file)
                     is_video = True
                     break
                 elif file.endswith(".jpg") or file.endswith(".png"):
-                    media_file = file_path
+                    media_file = os.path.join(shortcode, file)
                     break
         
         if media_file and os.path.exists(media_file):
+            # Send media
+            with open(media_file, 'rb') as file:
+                if is_video:
+                    markup = types.InlineKeyboardMarkup()
+                    btn_audio = types.InlineKeyboardButton("🎵 MP3 yuklab olish", callback_data=f"extract_audio_{user_id}")
+                    markup.add(btn_audio)
+                    try:
+                        bot.send_video(message.chat.id, file, caption=caption, reply_markup=markup)
+                    except:
+                        # Try without caption if fails
+                        file.seek(0)
+                        bot.send_video(message.chat.id, file, reply_markup=markup)
+                else:
+                    try:
+                        bot.send_photo(message.chat.id, file, caption=caption)
+                    except:
+                        file.seek(0)
+                        bot.send_photo(message.chat.id, file)
+            
+            # Delete loading message
+            if loading_msg:
+                try:
+                    bot.delete_message(message.chat.id, loading_msg.message_id)
+                except:
+                    pass
+            
             # Store for MP3 extraction if video
             if is_video:
                 user_data[user_id] = {
                     'file_path': media_file,
-                    'folder_path': folder_path,
+                    'folder_path': shortcode,
                     'platform': 'instagram',
                     'is_video': is_video
                 }
-            
-            # Send media
-            try:
-                with open(media_file, 'rb') as file:
-                    if is_video:
-                        markup = types.InlineKeyboardMarkup()
-                        btn_audio = types.InlineKeyboardButton("🎵 MP3 yuklab olish", callback_data=f"extract_audio_{user_id}")
-                        markup.add(btn_audio)
-                        bot.send_video(message.chat.id, file, caption=caption, reply_markup=markup)
-                    else:
-                        bot.send_photo(message.chat.id, file, caption=caption)
-            except Exception as send_error:
-                # If sending fails, try without caption
-                with open(media_file, 'rb') as file:
-                    if is_video:
-                        markup = types.InlineKeyboardMarkup()
-                        btn_audio = types.InlineKeyboardButton("🎵 MP3 yuklab olish", callback_data=f"extract_audio_{user_id}")
-                        markup.add(btn_audio)
-                        bot.send_video(message.chat.id, file, reply_markup=markup)
-                    else:
-                        bot.send_photo(message.chat.id, file)
+            else:
+                # Cleanup immediately if not video (like videodownloader.py)
+                try:
+                    for f in os.listdir(shortcode):
+                        os.remove(os.path.join(shortcode, f))
+                    os.rmdir(shortcode)
+                except:
+                    pass
             
             # Increment download count
             increment_download_count(user_id)
             
-            # Cleanup if not video (video needs to be kept for MP3)
-            if not is_video and folder_path:
-                try:
-                    shutil.rmtree(folder_path, ignore_errors=True)
-                except:
-                    pass
-            
             return True
         else:
-            bot.reply_to(message, "❌ Instagram'dan media topilmadi. Havola to'g'rimi?")
-            # Cleanup failed download
-            if folder_path and os.path.exists(folder_path):
+            # Delete loading message
+            if loading_msg:
                 try:
-                    shutil.rmtree(folder_path, ignore_errors=True)
+                    bot.delete_message(message.chat.id, loading_msg.message_id)
+                except:
+                    pass
+            bot.reply_to(message, "❌ Instagram'dan media topilmadi")
+            # Cleanup
+            if shortcode and os.path.exists(shortcode):
+                try:
+                    shutil.rmtree(shortcode, ignore_errors=True)
                 except:
                     pass
             return False
             
     except Exception as e:
-        bot.reply_to(message, f"❌ Instagram xatosi: {str(e)}")
-        # Cleanup on error
-        if folder_path and os.path.exists(folder_path):
+        # Delete loading message
+        if loading_msg:
             try:
-                shutil.rmtree(folder_path, ignore_errors=True)
+                bot.delete_message(message.chat.id, loading_msg.message_id)
+            except:
+                pass
+        bot.reply_to(message, "❌ Instagram yuklab olinmadi")
+        # Cleanup on error (like videodownloader.py)
+        if shortcode and os.path.exists(shortcode):
+            try:
+                for f in os.listdir(shortcode):
+                    os.remove(os.path.join(shortcode, f))
+                os.rmdir(shortcode)
             except:
                 pass
         return False
