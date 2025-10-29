@@ -37,9 +37,10 @@ USERS_DB_FILE = "users_db.json"
 loader = instaloader.Instaloader(
     download_comments=False,
     download_geotags=False,
-    download_pictures=True,  # Enable for carousel
+    download_pictures=True,
     download_video_thumbnails=False,
-    save_metadata=False,
+    save_metadata=True,  # Need this for carousel detection
+    compress_json=False
 )
 
 
@@ -162,7 +163,14 @@ def download_instagram(url, user_id, message):
         
         # Download post
         post = instaloader.Post.from_shortcode(loader.context, shortcode)
-        loader.download_post(post, target=shortcode)
+        
+        # Check if it's a sidecar (carousel)
+        if post.typename == 'GraphSidecar':
+            # Download all carousel items
+            loader.download_post(post, target=shortcode)
+        else:
+            # Single post
+            loader.download_post(post, target=shortcode)
         
         # Get caption
         caption = post.caption if post.caption else "📸 Instagram"

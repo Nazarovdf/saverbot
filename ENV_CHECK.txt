@@ -1,0 +1,22 @@
+⚠️ MUHIM: .env FAYLNI TEKSHIRING!
+
+.env fayli (c:/Users/dilsh/OneDrive/Desktop/loyihalar/instasaver/.env)
+
+Quyidagi formatda bo'lishi KERAK (= oldida va keyin HECH QANDAY space yo'q):
+
+BOT_TOKEN=8307953531:AAFnWkuEdeT4xdu27PEeFgWLNysBm_Zyt5E
+ADMIN_ID=5463769569
+
+NOTO'G'RI formatlar:
+❌ BOT_TOKEN = 8307953531:...    (spaces bor)
+❌ BOT_TOKEN= 8307953531:...     (keyingi space)
+❌ BOT_TOKEN =8307953531:...     (oldingi space)
+
+TO'G'RI format:
+✅ BOT_TOKEN=8307953531:...      (spacesiz)
+✅ ADMIN_ID=5463769569           (spacesiz)
+
+Keyin botni restart qiling:
+1. Ctrl+C (to'xtatish)
+2. py bot.py (qayta ishga tushirish)
+3. Terminal'da ko'ring: "Bot started. Admin ID: 5463769569"
