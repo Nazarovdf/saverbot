@@ -1,0 +1,5 @@
+pyTelegramBotAPI
+instaloader
+yt-dlp
+requests
+python-dotenv
