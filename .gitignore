@@ -45,3 +45,15 @@ temp_downloads/
 # OS
 .DS_Store
 Thumbs.db
+
+# Backup files
+*.backup
+videodownloader*.py
+push_final.bat
+
+# Instagram/YouTube downloads
+*.mp4
+*.mp3
+*.jpg
+*.png
+*_UTC_*/
